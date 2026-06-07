@@ -122,32 +122,21 @@ Both functions perform sequential Supabase calls without a database transaction:
 
 ---
 
-### UX-5: 404 and error boundary pages lack AppHeader navigation 🔴 OPEN
+### ~~UX-5: 404 and error boundary pages lack AppHeader navigation~~ ✅ FIXED
 
-**File:** `src/routes/__root.tsx`
-**Issue:** `NotFoundComponent` and `ErrorComponent` render outside `RootComponent`, so they have no nav. A user who deep-links to a broken warehouse URL sees a plain error with only a "Back to warehouses" hardcoded link and no navigation context.
-**Fix:** Wrap both components in `<div className="min-h-screen bg-background"><AppHeader />...</div>`.
+**Resolution:** Both `NotFoundComponent` and `ErrorComponent` in `src/routes/__root.tsx` now render `<AppHeader />` at the top, with content centered via `py-24` below it.
 
 ---
 
-### P-2: Transfer success toast has no shortcut to destination warehouse 🔴 OPEN
+### ~~P-2: Transfer success toast has no shortcut to destination warehouse~~ ✅ FIXED
 
-**File:** `src/routes/warehouses.$id.tsx` — `TransferDrawer`
-**Issue:** After a successful transfer you're still on the source page with no way to verify the destination received stock without manually navigating.
-**Fix:**
-```tsx
-toast.success(`${q} units transferred...`, {
-  action: { label: "View destination", onClick: () => navigate({ to: "/warehouses/$id", params: { id: destWh } }) }
-})
-```
+**Resolution:** `TransferDrawer` in `src/routes/warehouses.$id.tsx` now captures `destWh` before async work and passes a `"View destination"` action to the success toast that navigates to the destination warehouse page.
 
 ---
 
-### P-3: Transfer pairs in Activity are visually unlinked 🔴 OPEN
+### ~~P-3: Transfer pairs in Activity are visually unlinked~~ ✅ FIXED
 
-**File:** `src/routes/activity.tsx`
-**Issue:** `reference_id` is fetched but never used. The `transfer_out` from Delhi and `transfer_in` to Mumbai appear as two unrelated rows with no visual connection.
-**Fix:** Group rows by `reference_id` client-side and render them adjacently with a shared visual indicator.
+**Resolution:** `src/routes/activity.tsx` now groups rows by `reference_id` into a `processedItems` memo. Complete pairs render as adjacent rows — the first (`transfer_out`) shows "→ [Destination]" inline, the second (`transfer_in`) shows "← [Source]" inline. The pair's second row uses a softer `border-primary/20` top border to visually connect it to the first.
 
 ---
 
@@ -171,13 +160,13 @@ toast.success(`${q} units transferred...`, {
 
 ## Quick Reference: Remaining Open Issues
 
-| Issue | File | Effort |
+| Issue | File | Status |
 |---|---|---|
-| Activity search narrow + placeholder misleading | `src/routes/activity.tsx` | 5 min |
-| Transfer drawer missing notes field | `src/routes/warehouses.$id.tsx` | 15 min |
-| Edit drawer no default reason / no preview | `src/routes/warehouses.$id.tsx` | 20 min |
-| Transfer toast no "View destination" action | `src/routes/warehouses.$id.tsx` | 10 min |
-| 404/error page missing AppHeader | `src/routes/__root.tsx` | 15 min |
-| Non-atomic adjustInventory / transferStock | `src/lib/wms.ts` | 60–90 min (requires migration) |
-| Activity pagination + date filter + export | `src/routes/activity.tsx` + `wms.ts` | 2–3 hours |
-| Transfer pairs visually linked in Activity | `src/routes/activity.tsx` | 30–45 min |
+| ~~Activity search narrow + placeholder misleading~~ | `src/routes/activity.tsx` | ✅ FIXED (remote) |
+| ~~Transfer drawer missing notes field~~ | `src/routes/warehouses.$id.tsx` | ✅ FIXED |
+| ~~Edit drawer no default reason / no preview~~ | `src/routes/warehouses.$id.tsx` | ✅ FIXED |
+| ~~Transfer toast no "View destination" action~~ | `src/routes/warehouses.$id.tsx` | ✅ FIXED |
+| ~~404/error page missing AppHeader~~ | `src/routes/__root.tsx` | ✅ FIXED |
+| ~~Transfer pairs visually linked in Activity~~ | `src/routes/activity.tsx` | ✅ FIXED |
+| Non-atomic adjustInventory / transferStock | `src/lib/wms.ts` | 🔴 OPEN (60–90 min, requires migration) |
+| Activity pagination + export | `src/routes/activity.tsx` + `wms.ts` | 🔴 OPEN (2–3 hours) |

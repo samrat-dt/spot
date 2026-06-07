@@ -334,12 +334,12 @@ function AnimatedCount({ value }: { value: number }) {
 function EditDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseId: string; onClose: () => void }) {
   const qc = useQueryClient();
   const [delta, setDelta] = useState<string>("");
-  const [reason, setReason] = useState<Reason | "">("");
+  const [reason, setReason] = useState<Reason>("received_stock");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (row) { setDelta(""); setReason(""); setNotes(""); setError(null); }
+    if (row) { setDelta(""); setReason("received_stock"); setNotes(""); setError(null); }
   }, [row]);
 
   const mutate = useMutation({
@@ -347,7 +347,6 @@ function EditDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseI
       if (!row) return;
       const d = parseInt(delta, 10);
       if (Number.isNaN(d) || d === 0) throw new Error("Enter a positive or negative amount.");
-      if (!reason) throw new Error("Select a reason.");
       return adjustInventory({
         inventoryId: row.id,
         productId: row.product_id,
@@ -398,6 +397,17 @@ function EditDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseI
                   placeholder="e.g. 20 or -5"
                 />
                 <p className="text-xs text-muted-foreground">Use a positive number to add, negative to remove.</p>
+                {delta !== "" && !Number.isNaN(parseInt(delta, 10)) && parseInt(delta, 10) !== 0 && (
+                  <p className="text-xs text-muted-foreground">
+                    New quantity:{" "}
+                    <span className={`font-semibold ${(row.quantity ?? 0) + parseInt(delta, 10) < 0 ? "text-destructive" : "text-foreground"}`}>
+                      {Math.max(0, (row.quantity ?? 0) + parseInt(delta, 10)).toLocaleString()}
+                    </span>
+                    {(row.quantity ?? 0) + parseInt(delta, 10) < 0 && (
+                      <span className="ml-1 text-destructive">(cannot go below 0)</span>
+                    )}
+                  </p>
+                )}
               </div>
 
               <div className="grid gap-1.5">
@@ -436,12 +446,14 @@ function EditDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseI
 // ---- Transfer Drawer ----
 function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseId: string; onClose: () => void }) {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [destWh, setDestWh] = useState<string>("");
   const [destBin, setDestBin] = useState<string>("");
   const [qty, setQty] = useState<string>("");
+  const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { if (row) { setDestWh(""); setDestBin(""); setQty(""); setError(null); } }, [row]);
+  useEffect(() => { if (row) { setDestWh(""); setDestBin(""); setQty(""); setNotes(""); setError(null); } }, [row]);
 
   const { data: warehouses = [] } = useQuery({ queryKey: ["wh-list"], queryFn: listWarehouses });
   const { data: bins = [] } = useQuery({
@@ -489,6 +501,7 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
         destWarehouseId: destWh,
         destBinId: destBin,
         quantity: q,
+        notes: notes || undefined,
       });
       return q;
     },
@@ -498,7 +511,10 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
       qc.invalidateQueries({ queryKey: ["warehouses-summary"] });
       qc.invalidateQueries({ queryKey: ["products-summary"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
-      toast.success(`${q} units transferred from ${sourceWh?.name} → ${destWhName}.`);
+      const capturedDest = destWh;
+      toast.success(`${q} units transferred from ${sourceWh?.name} → ${destWhName}.`, {
+        action: { label: "View destination", onClick: () => navigate({ to: "/warehouses/$id", params: { id: capturedDest } }) },
+      });
       onClose();
     },
     onError: (e: Error) => setError(e.message),
@@ -575,6 +591,11 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
                 <Input id="tqty" type="number" min={1} max={row.quantity ?? 0}
                   value={qty} onChange={(e) => { setQty(e.target.value); setError(null); }}
                   placeholder={`Up to ${row.quantity ?? 0}`} />
+              </div>
+
+              <div className="grid gap-1.5">
+                <Label htmlFor="tnotes">Notes <span className="text-muted-foreground">(optional)</span></Label>
+                <Textarea id="tnotes" value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any context for the team" />
               </div>
 
               {error && <p className="rounded-md bg-destructive/10 px-3 py-2 text-sm text-destructive">{error}</p>}

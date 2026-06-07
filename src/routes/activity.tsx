@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { fetchActivity, REASON_LABELS, listWarehouses, listProducts, type Reason } from "@/lib/wms";
-import { useMemo, useState } from "react";
+import { Fragment, useMemo, useState } from "react";
 import { Activity, ArrowRight, Warehouse, Package, Boxes } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { format } from "date-fns";
@@ -63,6 +63,36 @@ function ActivityPage() {
       return true;
     });
   }, [data, search, whs, prods, reasons, directions, datePreset]);
+
+  const processedItems = useMemo(() => {
+    const refGroups = new Map<string, any[]>();
+    for (const r of filtered) {
+      if (r.reference_id) {
+        const g = refGroups.get(r.reference_id) ?? [];
+        g.push(r);
+        refGroups.set(r.reference_id, g);
+      }
+    }
+    const items: ({ type: "single"; row: any } | { type: "pair"; out: any; in: any })[] = [];
+    const seen = new Set<string>();
+    for (const r of filtered) {
+      if (r.reference_id) {
+        if (seen.has(r.reference_id)) continue;
+        seen.add(r.reference_id);
+        const group = refGroups.get(r.reference_id)!;
+        if (group.length === 2) {
+          const out = group.find((x: any) => x.reason === "transfer_out") ?? group[0];
+          const inn = group.find((x: any) => x.reason === "transfer_in") ?? group[1];
+          items.push({ type: "pair", out, in: inn });
+        } else {
+          items.push({ type: "single", row: r });
+        }
+      } else {
+        items.push({ type: "single", row: r });
+      }
+    }
+    return items;
+  }, [filtered]);
 
   const clearAll = () => {
     setSearch(""); setWhs([]); setProds([]); setReasons([]); setDirections([]); setDatePreset("all");
@@ -160,7 +190,49 @@ function ActivityPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r: any) => {
+              {processedItems.map((item) => {
+                if (item.type === "pair") {
+                  const { out, in: inn } = item;
+                  return (
+                    <Fragment key={out.reference_id}>
+                      <tr className="border-t border-border bg-primary-soft/30">
+                        <td className="px-5 py-3.5 font-medium">{out.products?.name}</td>
+                        <td className="px-5 py-3.5 text-muted-foreground">{out.warehouses?.name}</td>
+                        <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{out.bins?.bin_label}</td>
+                        <td className="px-5 py-3.5 text-right">
+                          <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-sm font-semibold tabular-nums bg-primary-soft text-primary">
+                            <ArrowRight className="h-3 w-3" />
+                            {out.quantity_delta}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="text-muted-foreground">{REASON_LABELS["transfer_out"]}</span>
+                          <span className="ml-1.5 text-xs font-medium text-primary">→ {inn.warehouses?.name}</span>
+                        </td>
+                        <td className="px-5 py-3.5 text-muted-foreground">{out.notes ?? <span className="text-border">—</span>}</td>
+                        <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{format(new Date(out.created_at), "MMM d, yyyy · HH:mm")}</td>
+                      </tr>
+                      <tr className="border-t border-primary/20 bg-primary-soft/20">
+                        <td className="px-5 py-3.5 font-medium">{inn.products?.name}</td>
+                        <td className="px-5 py-3.5 text-muted-foreground">{inn.warehouses?.name}</td>
+                        <td className="px-5 py-3.5 font-mono text-xs text-muted-foreground">{inn.bins?.bin_label}</td>
+                        <td className="px-5 py-3.5 text-right">
+                          <span className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-sm font-semibold tabular-nums bg-primary-soft text-primary">
+                            <ArrowRight className="h-3 w-3" />
+                            {inn.quantity_delta > 0 ? "+" : ""}{inn.quantity_delta}
+                          </span>
+                        </td>
+                        <td className="px-5 py-3.5">
+                          <span className="text-muted-foreground">{REASON_LABELS["transfer_in"]}</span>
+                          <span className="ml-1.5 text-xs font-medium text-primary">← {out.warehouses?.name}</span>
+                        </td>
+                        <td className="px-5 py-3.5 text-muted-foreground">{inn.notes ?? <span className="text-border">—</span>}</td>
+                        <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{format(new Date(inn.created_at), "MMM d, yyyy · HH:mm")}</td>
+                      </tr>
+                    </Fragment>
+                  );
+                }
+                const r = item.row;
                 const reason = r.reason as Reason;
                 const isTransfer = reason === "transfer_in" || reason === "transfer_out";
                 const delta = r.quantity_delta;
@@ -184,7 +256,7 @@ function ActivityPage() {
                   </tr>
                 );
               })}
-              {filtered.length === 0 && data.length > 0 && (
+              {processedItems.length === 0 && data.length > 0 && (
                 <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-muted-foreground">
                   No results. Try removing a filter.
                 </td></tr>
