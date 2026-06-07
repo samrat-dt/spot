@@ -220,7 +220,7 @@ async function writeAudit(row: {
       entity_id: row.entity_id,
       entity_name: row.entity_name,
       action: row.action,
-      changes: row.changes ?? {},
+      changes: (row.changes ?? {}) as any,
       warehouse_id: row.warehouse_id ?? null,
       notes: row.notes ?? null,
     });
