@@ -10,7 +10,7 @@ import { format } from "date-fns";
 export const Route = createFileRoute("/activity")({
   head: () => ({
     meta: [
-      { title: "Activity — Stackr" },
+      { title: "Activity — Spot" },
       { name: "description", content: "Complete history of every inventory change across all warehouses." },
     ],
   }),

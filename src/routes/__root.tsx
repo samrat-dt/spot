@@ -45,7 +45,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Stackr — Warehouse Management" },
+      { title: "Spot — Warehouse Management" },
       { name: "description", content: "A clear, simple warehouse management system for tracking inventory across multiple warehouses." },
     ],
     links: [{ rel: "stylesheet", href: appCss }],
