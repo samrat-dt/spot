@@ -248,6 +248,9 @@ function WarehouseDetailPage() {
                         <div className="flex justify-end gap-1">
                           <Button size="sm" variant="ghost" onClick={() => setEditRow(r)}>
                             <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
+                            <span className="ml-1.5 rounded border border-border bg-muted px-1 font-mono text-[10px] text-muted-foreground">
+                              {r.bins?.bin_label}
+                            </span>
                           </Button>
                           <Button size="sm" variant="ghost" onClick={() => setTransferRow(r)}>
                             <ArrowRightLeft className="mr-1 h-3.5 w-3.5" /> Transfer
@@ -379,7 +382,12 @@ function EditDrawer({ row, warehouseId, onClose }: { row: Row | null; warehouseI
         {row && (
           <>
             <SheetHeader>
-              <SheetTitle>{row.products?.name}</SheetTitle>
+              <div className="flex items-center gap-2">
+                <SheetTitle>{row.products?.name}</SheetTitle>
+                <span className="inline-flex items-center gap-1 rounded border border-primary/30 bg-primary-soft px-1.5 py-0.5 font-mono text-[11px] font-medium text-primary">
+                  <Layers className="h-2.5 w-2.5" /> {row.bins?.bin_label}
+                </span>
+              </div>
               <SheetDescription className="font-mono text-xs">{row.products?.sku_code}</SheetDescription>
             </SheetHeader>
 
@@ -482,8 +490,10 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
   const destWhName = warehouses.find((w) => w.id === destWh)?.name;
   const existingAtDest = destBin ? existingByBin[destBin] : undefined;
 
-  const binsWithProduct = bins.filter((b) => existingByBin[b.id] !== undefined);
-  const binsEmpty = bins.filter((b) => existingByBin[b.id] === undefined);
+  const isSameWarehouse = destWh === warehouseId;
+  const availableBins = isSameWarehouse && row ? bins.filter((b) => b.id !== row.bin_id) : bins;
+  const binsWithProduct = availableBins.filter((b) => existingByBin[b.id] !== undefined);
+  const binsEmpty = availableBins.filter((b) => existingByBin[b.id] === undefined);
 
   const mutate = useMutation({
     mutationFn: async () => {
@@ -512,9 +522,15 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
       qc.invalidateQueries({ queryKey: ["products-summary"] });
       qc.invalidateQueries({ queryKey: ["activity"] });
       const capturedDest = destWh;
-      toast.success(`${q} units transferred from ${sourceWh?.name} → ${destWhName}.`, {
-        action: { label: "View destination", onClick: () => navigate({ to: "/warehouses/$id", params: { id: capturedDest } }) },
-      });
+      const capturedSameWh = capturedDest === warehouseId;
+      if (capturedSameWh) {
+        const destBinLabel = bins.find((b) => b.id === destBin)?.bin_label;
+        toast.success(`${q} units moved from Bin ${row?.bins?.bin_label} → Bin ${destBinLabel}.`);
+      } else {
+        toast.success(`${q} units transferred from ${sourceWh?.name} → ${destWhName}.`, {
+          action: { label: "View destination", onClick: () => navigate({ to: "/warehouses/$id", params: { id: capturedDest } }) },
+        });
+      }
       onClose();
     },
     onError: (e: Error) => setError(e.message),
@@ -527,7 +543,7 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
           <>
             <SheetHeader>
               <SheetTitle>Transfer stock</SheetTitle>
-              <SheetDescription>Move units from this bin to another warehouse and bin.</SheetDescription>
+              <SheetDescription>Move units to a different bin or warehouse.</SheetDescription>
             </SheetHeader>
 
             <div className="mt-6 space-y-5 px-4">
@@ -544,6 +560,11 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
                 <Select value={destWh} onValueChange={(v) => { setDestWh(v); setDestBin(""); }}>
                   <SelectTrigger><SelectValue placeholder="Choose warehouse" /></SelectTrigger>
                   <SelectContent>
+                    {sourceWh && (
+                      <SelectItem key={warehouseId} value={warehouseId}>
+                        {sourceWh.name} <span className="text-muted-foreground">— move within this warehouse</span>
+                      </SelectItem>
+                    )}
                     {warehouses.filter((w) => w.id !== warehouseId).map((w) => (
                       <SelectItem key={w.id} value={w.id}>{w.name} <span className="text-muted-foreground">— {w.city}</span></SelectItem>
                     ))}
@@ -552,7 +573,7 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
               </div>
 
               <div className="grid gap-1.5">
-                <Label>Destination bin</Label>
+                <Label>Destination bin{isSameWarehouse ? " (in this warehouse)" : ""}</Label>
                 <Select value={destBin} onValueChange={setDestBin} disabled={!destWh}>
                   <SelectTrigger><SelectValue placeholder={destWh ? "Choose a bin" : "Pick a warehouse first"} /></SelectTrigger>
                   <SelectContent>
@@ -576,6 +597,9 @@ function TransferDrawer({ row, warehouseId, onClose }: { row: Row | null; wareho
                     )}
                     {bins.length === 0 && (
                       <div className="px-2 py-1.5 text-xs text-muted-foreground">No bins in this warehouse yet.</div>
+                    )}
+                    {bins.length > 0 && availableBins.length === 0 && (
+                      <div className="px-2 py-1.5 text-xs text-muted-foreground">No other bins to move to. Add a new bin first.</div>
                     )}
                   </SelectContent>
                 </Select>
@@ -782,6 +806,19 @@ function AddInventoryDialog({ open, onClose, warehouseId, bins }: {
     if (open) { setProductId(""); setBinId(""); setQty(""); setReason("received_stock"); setNotes(""); }
   }, [open]);
 
+  const { data: existingAtBin } = useQuery({
+    queryKey: ["inv-at-bin", productId, binId],
+    queryFn: async () => {
+      const { supabase } = await import("@/integrations/supabase/client");
+      const { data } = await supabase
+        .from("inventory").select("quantity")
+        .eq("product_id", productId).eq("bin_id", binId).eq("is_deleted", false)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!productId && !!binId,
+  });
+
   const add = useMutation({
     mutationFn: () => addInventory({
       warehouseId, binId, productId,
@@ -848,6 +885,11 @@ function AddInventoryDialog({ open, onClose, warehouseId, bins }: {
               <Input id="iqty" type="number" min={0} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="e.g. 50" />
             </div>
           </div>
+          {existingAtBin && (
+            <p className="rounded-md bg-primary-soft px-3 py-2 text-xs text-primary">
+              This bin already holds {existingAtBin.quantity} units of this product — your quantity will be added to the existing stock.
+            </p>
+          )}
           <div className="grid gap-1.5">
             <Label>Reason</Label>
             <Select value={reason} onValueChange={(v) => setReason(v as Reason)}>
