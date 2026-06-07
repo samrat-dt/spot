@@ -14,7 +14,223 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      activity_log: {
+        Row: {
+          bin_id: string
+          created_at: string
+          id: string
+          notes: string | null
+          product_id: string
+          quantity_delta: number
+          reason: Database["public"]["Enums"]["adjustment_reason"]
+          reference_id: string | null
+          warehouse_id: string
+        }
+        Insert: {
+          bin_id: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          product_id: string
+          quantity_delta: number
+          reason: Database["public"]["Enums"]["adjustment_reason"]
+          reference_id?: string | null
+          warehouse_id: string
+        }
+        Update: {
+          bin_id?: string
+          created_at?: string
+          id?: string
+          notes?: string | null
+          product_id?: string
+          quantity_delta?: number
+          reason?: Database["public"]["Enums"]["adjustment_reason"]
+          reference_id?: string | null
+          warehouse_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "activity_log_bin_id_fkey"
+            columns: ["bin_id"]
+            isOneToOne: false
+            referencedRelation: "bins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "activity_log_warehouse_id_fkey"
+            columns: ["warehouse_id"]
+            isOneToOne: false
+            referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      bins: {
+        Row: {
+          aisle: string
+          bin_label: string | null
+          created_at: string
+          id: string
+          is_deleted: boolean
+          rack: string
+          shelf: string
+          updated_at: string
+          warehouse_id: string
+        }
+        Insert: {
+          aisle: string
+          bin_label?: string | null
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          rack: string
+          shelf: string
+          updated_at?: string
+          warehouse_id: string
+        }
+        Update: {
+          aisle?: string
+          bin_label?: string | null
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          rack?: string
+          shelf?: string
+          updated_at?: string
+          warehouse_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "bins_warehouse_id_fkey"
+            columns: ["warehouse_id"]
+            isOneToOne: false
+            referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      inventory: {
+        Row: {
+          bin_id: string
+          created_at: string
+          id: string
+          is_deleted: boolean
+          product_id: string
+          quantity: number
+          updated_at: string
+          warehouse_id: string
+        }
+        Insert: {
+          bin_id: string
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          product_id: string
+          quantity?: number
+          updated_at?: string
+          warehouse_id: string
+        }
+        Update: {
+          bin_id?: string
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          product_id?: string
+          quantity?: number
+          updated_at?: string
+          warehouse_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "inventory_bin_id_fkey"
+            columns: ["bin_id"]
+            isOneToOne: false
+            referencedRelation: "bins"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_product_id_fkey"
+            columns: ["product_id"]
+            isOneToOne: false
+            referencedRelation: "products"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "inventory_warehouse_id_fkey"
+            columns: ["warehouse_id"]
+            isOneToOne: false
+            referencedRelation: "warehouses"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      products: {
+        Row: {
+          created_at: string
+          id: string
+          is_deleted: boolean
+          name: string
+          sku_code: string
+          unit_of_measure: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          name: string
+          sku_code: string
+          unit_of_measure?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          name?: string
+          sku_code?: string
+          unit_of_measure?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      warehouses: {
+        Row: {
+          city: string
+          code: string
+          created_at: string
+          id: string
+          is_deleted: boolean
+          name: string
+          updated_at: string
+        }
+        Insert: {
+          city: string
+          code: string
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          name: string
+          updated_at?: string
+        }
+        Update: {
+          city?: string
+          code?: string
+          created_at?: string
+          id?: string
+          is_deleted?: boolean
+          name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -23,7 +239,14 @@ export type Database = {
       [_ in never]: never
     }
     Enums: {
-      [_ in never]: never
+      adjustment_reason:
+        | "received_stock"
+        | "sold"
+        | "damaged"
+        | "returned"
+        | "manual_correction"
+        | "transfer_in"
+        | "transfer_out"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -150,6 +373,16 @@ export type CompositeTypes<
 
 export const Constants = {
   public: {
-    Enums: {},
+    Enums: {
+      adjustment_reason: [
+        "received_stock",
+        "sold",
+        "damaged",
+        "returned",
+        "manual_correction",
+        "transfer_in",
+        "transfer_out",
+      ],
+    },
   },
 } as const
