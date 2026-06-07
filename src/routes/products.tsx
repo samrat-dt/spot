@@ -2,10 +2,15 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useState, useEffect, useMemo } from "react";
 import { Package, Plus, Pencil, Archive, Search, Tag } from "lucide-react";
-import { fetchProducts, createProduct, updateProduct, archiveProduct, type ProductSummary } from "@/lib/wms";
+import {
+  fetchProducts, createProduct, updateProduct, archiveProduct, type ProductSummary,
+  listWarehouses, listBins, addInventory, type Reason, REASON_LABELS,
+} from "@/lib/wms";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { EmptyState } from "@/components/EmptyState";
@@ -29,6 +34,7 @@ function ProductsPage() {
   const [search, setSearch] = useState("");
   const [editProduct, setEditProduct] = useState<ProductSummary | null>(null);
   const [archiveTarget, setArchiveTarget] = useState<ProductSummary | null>(null);
+  const [receiveTarget, setReceiveTarget] = useState<ProductSummary | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -96,6 +102,9 @@ function ProductsPage() {
                   <td className="px-5 py-4 text-right text-lg font-semibold tabular-nums">{p.totalUnits.toLocaleString()}</td>
                   <td className="px-5 py-4 text-right">
                     <div className="flex justify-end gap-1">
+                      <Button size="sm" variant="ghost" onClick={() => setReceiveTarget(p)}>
+                        <Plus className="mr-1 h-3.5 w-3.5" /> Receive
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => setEditProduct(p)}>
                         <Pencil className="mr-1 h-3.5 w-3.5" /> Edit
                       </Button>
@@ -114,9 +123,150 @@ function ProductsPage() {
         )}
       </div>
 
+      <ReceiveStockDialog product={receiveTarget} onClose={() => setReceiveTarget(null)} />
       <EditProductDialog product={editProduct} onClose={() => setEditProduct(null)} />
       <ArchiveProductDialog product={archiveTarget} onClose={() => setArchiveTarget(null)} />
     </main>
+  );
+}
+
+function ReceiveStockDialog({ product, onClose }: { product: ProductSummary | null; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [warehouseId, setWarehouseId] = useState("");
+  const [binId, setBinId] = useState("");
+  const [qty, setQty] = useState("");
+  const [reason, setReason] = useState<Reason>("received_stock");
+  const [notes, setNotes] = useState("");
+
+  useEffect(() => {
+    if (product) { setWarehouseId(""); setBinId(""); setQty(""); setReason("received_stock"); setNotes(""); }
+  }, [product]);
+
+  const { data: warehouses = [] } = useQuery({
+    queryKey: ["wh-list"],
+    queryFn: listWarehouses,
+    enabled: !!product,
+  });
+
+  const { data: bins = [] } = useQuery({
+    queryKey: ["bins", warehouseId],
+    queryFn: () => listBins(warehouseId),
+    enabled: !!warehouseId,
+  });
+
+  const { data: existingAtBin } = useQuery({
+    queryKey: ["inv-at-bin", product?.id, binId],
+    queryFn: async () => {
+      const { supabase } = await import("@/integrations/supabase/client");
+      const { data } = await supabase
+        .from("inventory").select("quantity")
+        .eq("product_id", product!.id).eq("bin_id", binId).eq("is_deleted", false)
+        .maybeSingle();
+      return data;
+    },
+    enabled: !!product && !!binId,
+  });
+
+  const add = useMutation({
+    mutationFn: () => addInventory({
+      warehouseId, binId,
+      productId: product!.id,
+      quantity: parseInt(qty, 10) || 0,
+      reason, notes,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["products-summary"] });
+      qc.invalidateQueries({ queryKey: ["warehouse-detail"] });
+      qc.invalidateQueries({ queryKey: ["bins-summary"] });
+      qc.invalidateQueries({ queryKey: ["warehouses-summary"] });
+      qc.invalidateQueries({ queryKey: ["activity"] });
+      toast.success("Stock received");
+      onClose();
+    },
+    onError: (e: Error) => toast.error(e.message),
+  });
+
+  const q = parseInt(qty, 10);
+  const canSubmit = !!warehouseId && !!binId && !Number.isNaN(q) && q >= 0;
+
+  return (
+    <Dialog open={!!product} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="sm:max-w-lg">
+        {product && (
+          <>
+            <DialogHeader>
+              <DialogTitle>Receive stock</DialogTitle>
+              <DialogDescription>
+                Add units of <span className="font-medium text-foreground">{product.name}</span> into a specific bin.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-2">
+              <div className="grid gap-1.5">
+                <Label>Warehouse</Label>
+                <Select value={warehouseId} onValueChange={(v) => { setWarehouseId(v); setBinId(""); }}>
+                  <SelectTrigger><SelectValue placeholder="Choose a warehouse" /></SelectTrigger>
+                  <SelectContent>
+                    {warehouses.map((w) => (
+                      <SelectItem key={w.id} value={w.id}>
+                        {w.name} <span className="text-muted-foreground">— {w.city}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="grid gap-1.5">
+                  <Label>Bin</Label>
+                  <Select value={binId} onValueChange={setBinId} disabled={!warehouseId}>
+                    <SelectTrigger>
+                      <SelectValue placeholder={warehouseId ? "Choose a bin" : "Pick warehouse first"} />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {bins.map((b) => (
+                        <SelectItem key={b.id} value={b.id} className="font-mono">{b.bin_label}</SelectItem>
+                      ))}
+                      {bins.length === 0 && warehouseId && (
+                        <div className="px-2 py-1.5 text-xs text-muted-foreground">No bins in this warehouse yet.</div>
+                      )}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor="rqty">Quantity</Label>
+                  <Input id="rqty" type="number" min={0} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="e.g. 50" />
+                </div>
+              </div>
+              {existingAtBin && (
+                <p className="rounded-md bg-primary-soft px-3 py-2 text-xs text-primary">
+                  This bin already holds {existingAtBin.quantity} units — your quantity will be added to the existing stock.
+                </p>
+              )}
+              <div className="grid gap-1.5">
+                <Label>Reason</Label>
+                <Select value={reason} onValueChange={(v) => setReason(v as Reason)}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(["received_stock", "returned", "manual_correction"] as Reason[]).map((r) => (
+                      <SelectItem key={r} value={r}>{REASON_LABELS[r]}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="grid gap-1.5">
+                <Label>Notes <span className="text-muted-foreground">(optional)</span></Label>
+                <Textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Any context for the team" />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={onClose}>Cancel</Button>
+              <Button onClick={() => add.mutate()} disabled={!canSubmit || add.isPending}>
+                {add.isPending ? "Adding…" : "Receive stock"}
+              </Button>
+            </DialogFooter>
+          </>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
