@@ -62,7 +62,7 @@ export async function fetchWarehouseDetail(warehouseId: string) {
 export async function fetchActivity() {
   const { data, error } = await supabase
     .from("activity_log")
-    .select("id, created_at, quantity_delta, reason, notes, reference_id, products(name, sku_code), warehouses(name, code), bins(bin_label)")
+    .select("id, created_at, quantity_delta, reason, notes, reference_id, product_id, warehouse_id, bin_id, products(name, sku_code), warehouses(name, code), bins(bin_label)")
     .order("created_at", { ascending: false })
     .limit(500);
   if (error) throw error;
@@ -188,6 +188,65 @@ export async function listBins(warehouseId: string) {
   return data ?? [];
 }
 
+// ---- Audit log ----
+export type AuditAction = "created" | "updated" | "archived" | "seeded";
+export type AuditEntityType = "warehouse" | "product" | "bin" | "system";
+
+export const AUDIT_ACTION_LABELS: Record<AuditAction, string> = {
+  created: "Created",
+  updated: "Edited",
+  archived: "Archived",
+  seeded: "Seeded",
+};
+export const AUDIT_ENTITY_LABELS: Record<AuditEntityType, string> = {
+  warehouse: "Warehouse",
+  product: "Product",
+  bin: "Bin",
+  system: "System",
+};
+
+async function writeAudit(row: {
+  entity_type: AuditEntityType;
+  entity_id: string | null;
+  entity_name: string;
+  action: AuditAction;
+  changes?: Record<string, unknown>;
+  warehouse_id?: string | null;
+  notes?: string | null;
+}) {
+  try {
+    await supabase.from("audit_log").insert({
+      entity_type: row.entity_type,
+      entity_id: row.entity_id,
+      entity_name: row.entity_name,
+      action: row.action,
+      changes: (row.changes ?? {}) as any,
+      warehouse_id: row.warehouse_id ?? null,
+      notes: row.notes ?? null,
+    });
+  } catch (e) {
+    console.error("audit write failed", e);
+  }
+}
+
+function diffObj<T extends Record<string, unknown>>(before: T, after: T, fields: (keyof T)[]) {
+  const out: Record<string, { before: unknown; after: unknown }> = {};
+  for (const f of fields) {
+    if (before[f] !== after[f]) out[String(f)] = { before: before[f], after: after[f] };
+  }
+  return out;
+}
+
+export async function fetchAuditLog() {
+  const { data, error } = await supabase
+    .from("audit_log")
+    .select("*, warehouses(name, code)")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (error) throw error;
+  return data ?? [];
+}
+
 // ---- Warehouses ----
 export async function createWarehouse(input: { name: string; city: string; code: string }) {
   const code = input.code.trim().toUpperCase();
@@ -199,6 +258,11 @@ export async function createWarehouse(input: { name: string; city: string; code:
     .insert({ name: input.name.trim(), city: input.city.trim(), code })
     .select().single();
   if (error) throw error;
+  await writeAudit({
+    entity_type: "warehouse", entity_id: data.id, entity_name: data.name, action: "created",
+    warehouse_id: data.id,
+    changes: { name: data.name, city: data.city, code: data.code },
+  });
   return data;
 }
 
@@ -207,11 +271,20 @@ export async function updateWarehouse(id: string, input: { name: string; city: s
   const { data: dup } = await supabase
     .from("warehouses").select("id").eq("code", code).eq("is_deleted", false).neq("id", id).maybeSingle();
   if (dup) throw new Error(`A warehouse with code "${code}" already exists.`);
+  const { data: before } = await supabase.from("warehouses").select("name, city, code").eq("id", id).single();
+  const after = { name: input.name.trim(), city: input.city.trim(), code };
   const { error } = await supabase
     .from("warehouses")
-    .update({ name: input.name.trim(), city: input.city.trim(), code, updated_at: new Date().toISOString() })
+    .update({ ...after, updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw error;
+  const changes = before ? diffObj(before as any, after, ["name", "city", "code"]) : {};
+  if (Object.keys(changes).length > 0) {
+    await writeAudit({
+      entity_type: "warehouse", entity_id: id, entity_name: after.name, action: "updated",
+      warehouse_id: id, changes,
+    });
+  }
 }
 
 export async function archiveWarehouse(id: string) {
@@ -222,9 +295,14 @@ export async function archiveWarehouse(id: string) {
   const remaining = (rows ?? []).reduce((s, r) => s + (r.quantity ?? 0), 0);
   if (remaining > 0)
     throw new Error(`Cannot archive: ${remaining.toLocaleString()} units still in stock. Transfer or remove them first.`);
+  const { data: before } = await supabase.from("warehouses").select("name, city, code").eq("id", id).single();
   const { error } = await supabase
     .from("warehouses").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw error;
+  await writeAudit({
+    entity_type: "warehouse", entity_id: id, entity_name: before?.name ?? "Warehouse", action: "archived",
+    warehouse_id: id, changes: before ?? {},
+  });
 }
 
 // ---- Bins ----
@@ -273,6 +351,11 @@ export async function createBin(input: { warehouseId: string; aisle: string; rac
     shelf: input.shelf.trim().toUpperCase(),
   }).select().single();
   if (error) throw error;
+  await writeAudit({
+    entity_type: "bin", entity_id: data.id, entity_name: data.bin_label ?? label, action: "created",
+    warehouse_id: input.warehouseId,
+    changes: { aisle: data.aisle, rack: data.rack, shelf: data.shelf, label: data.bin_label ?? label },
+  });
   return data;
 }
 
@@ -282,13 +365,23 @@ export async function updateBin(id: string, input: { warehouseId: string; aisle:
     .from("bins").select("id").eq("warehouse_id", input.warehouseId)
     .eq("bin_label", label).eq("is_deleted", false).neq("id", id).maybeSingle();
   if (dup) throw new Error(`Bin "${label}" already exists in this warehouse.`);
-  const { error } = await supabase.from("bins").update({
+  const { data: before } = await supabase.from("bins").select("aisle, rack, shelf, bin_label").eq("id", id).single();
+  const after = {
     aisle: input.aisle.trim().toUpperCase(),
     rack: input.rack.trim().toUpperCase(),
     shelf: input.shelf.trim().toUpperCase(),
-    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("bins").update({
+    ...after, updated_at: new Date().toISOString(),
   }).eq("id", id);
   if (error) throw error;
+  const changes = before ? diffObj(before as any, { ...after, bin_label: label }, ["aisle", "rack", "shelf", "bin_label"]) : {};
+  if (Object.keys(changes).length > 0) {
+    await writeAudit({
+      entity_type: "bin", entity_id: id, entity_name: label, action: "updated",
+      warehouse_id: input.warehouseId, changes,
+    });
+  }
 }
 
 export async function archiveBin(id: string) {
@@ -297,12 +390,16 @@ export async function archiveBin(id: string) {
   const units = (rows ?? []).reduce((s, r) => s + (r.quantity ?? 0), 0);
   if ((rows ?? []).length > 0 && units > 0)
     throw new Error(`Cannot archive: bin still holds ${units.toLocaleString()} units. Transfer or remove them first.`);
-  // remove any zero-qty rows in this bin
+  const { data: before } = await supabase.from("bins").select("bin_label, warehouse_id").eq("id", id).single();
   if ((rows ?? []).length > 0) {
     await supabase.from("inventory").update({ is_deleted: true }).eq("bin_id", id);
   }
   const { error } = await supabase.from("bins").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw error;
+  await writeAudit({
+    entity_type: "bin", entity_id: id, entity_name: before?.bin_label ?? "Bin", action: "archived",
+    warehouse_id: before?.warehouse_id ?? null,
+  });
 }
 
 // ---- Products ----
@@ -351,16 +448,29 @@ export async function createProduct(input: { name: string; sku_code: string; uni
     unit_of_measure: input.unit_of_measure.trim() || "unit",
   }).select().single();
   if (error) throw error;
+  await writeAudit({
+    entity_type: "product", entity_id: data.id, entity_name: data.name, action: "created",
+    changes: { name: data.name, sku_code: data.sku_code, unit_of_measure: data.unit_of_measure },
+  });
   return data;
 }
 
 export async function updateProduct(id: string, input: { name: string; unit_of_measure: string }) {
-  const { error } = await supabase.from("products").update({
+  const { data: before } = await supabase.from("products").select("name, unit_of_measure").eq("id", id).single();
+  const after = {
     name: input.name.trim(),
     unit_of_measure: input.unit_of_measure.trim() || "unit",
-    updated_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("products").update({
+    ...after, updated_at: new Date().toISOString(),
   }).eq("id", id);
   if (error) throw error;
+  const changes = before ? diffObj(before as any, after, ["name", "unit_of_measure"]) : {};
+  if (Object.keys(changes).length > 0) {
+    await writeAudit({
+      entity_type: "product", entity_id: id, entity_name: after.name, action: "updated", changes,
+    });
+  }
 }
 
 export async function archiveProduct(id: string) {
@@ -369,11 +479,16 @@ export async function archiveProduct(id: string) {
   const units = (rows ?? []).reduce((s, r) => s + (r.quantity ?? 0), 0);
   if (units > 0)
     throw new Error(`Cannot archive: ${units.toLocaleString()} units still in stock across warehouses.`);
+  const { data: before } = await supabase.from("products").select("name, sku_code").eq("id", id).single();
   if ((rows ?? []).length > 0) {
     await supabase.from("inventory").update({ is_deleted: true }).eq("product_id", id);
   }
   const { error } = await supabase.from("products").update({ is_deleted: true, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) throw error;
+  await writeAudit({
+    entity_type: "product", entity_id: id, entity_name: before?.name ?? "Product", action: "archived",
+    changes: before ?? {},
+  });
 }
 
 // ---- Add inventory (first placement) ----
@@ -387,7 +502,6 @@ export async function addInventory(args: {
 }) {
   if (args.quantity < 0) throw new Error("Quantity must be 0 or more.");
 
-  // If row already exists for product+bin, top it up instead of duplicating
   const { data: existing, error: exErr } = await supabase
     .from("inventory").select("id, quantity")
     .eq("product_id", args.productId).eq("bin_id", args.binId).eq("is_deleted", false).maybeSingle();
@@ -469,5 +583,10 @@ export async function seedDemoData() {
   }
   const { error: iErr } = await supabase.from("inventory").insert(invRows);
   if (iErr) throw iErr;
+
+  await writeAudit({
+    entity_type: "system", entity_id: null, entity_name: "Demo data", action: "seeded",
+    changes: { warehouses: warehouses.length, products: products.length, bins: binRows.length, inventory_rows: invRows.length },
+  });
   return true;
 }
