@@ -9,7 +9,7 @@ export function AppHeader() {
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground shadow-card transition-transform group-hover:scale-105">
             <Boxes className="h-[18px] w-[18px]" strokeWidth={2.25} />
           </span>
-          <span className="text-[17px] font-semibold tracking-tight">Stackr</span>
+          <span className="text-[17px] font-semibold tracking-tight">Spot</span>
         </Link>
         <nav className="flex items-center gap-1 text-sm font-medium">
           <NavLink to="/">Warehouses</NavLink>

@@ -13,7 +13,7 @@ import { toast } from "sonner";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Warehouses — Stackr" },
+      { title: "Warehouses — Spot" },
       { name: "description", content: "All your warehouses at a glance — products, units in stock, and low-stock alerts." },
     ],
   }),
