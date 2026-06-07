@@ -13,6 +13,7 @@ export function AppHeader() {
         </Link>
         <nav className="flex items-center gap-1 text-sm font-medium">
           <NavLink to="/">Warehouses</NavLink>
+          <NavLink to="/products">Products</NavLink>
           <NavLink to="/activity">Activity</NavLink>
         </nav>
       </div>
