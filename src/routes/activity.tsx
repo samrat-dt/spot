@@ -1,11 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
-import { fetchActivity, REASON_LABELS, type Reason } from "@/lib/wms";
+import { fetchActivity, REASON_LABELS, listWarehouses, listProducts, type Reason } from "@/lib/wms";
 import { useMemo, useState } from "react";
-import { Activity, Search, ArrowRight } from "lucide-react";
-import { Input } from "@/components/ui/input";
+import { Activity, ArrowRight, Warehouse, Package, Boxes } from "lucide-react";
 import { EmptyState } from "@/components/EmptyState";
 import { format } from "date-fns";
+import {
+  FilterBar, MultiSelect, ChipGroup, DatePresetPicker, datePresetCutoff, type DatePreset,
+} from "@/components/FilterBar";
 
 export const Route = createFileRoute("/activity")({
   head: () => ({
@@ -17,33 +19,123 @@ export const Route = createFileRoute("/activity")({
   component: ActivityPage,
 });
 
+const REASON_OPTIONS: { value: Reason; label: string }[] = (Object.keys(REASON_LABELS) as Reason[])
+  .map((r) => ({ value: r, label: REASON_LABELS[r] }));
+
+type Direction = "in" | "out";
+const DIRECTION_OPTIONS: { value: Direction; label: string }[] = [
+  { value: "in", label: "Inbound (+)" },
+  { value: "out", label: "Outbound (−)" },
+];
+
 function ActivityPage() {
   const { data = [], isLoading } = useQuery({ queryKey: ["activity"], queryFn: fetchActivity });
+  const { data: warehouses = [] } = useQuery({ queryKey: ["warehouses-list"], queryFn: listWarehouses });
+  const { data: products = [] } = useQuery({ queryKey: ["products-list"], queryFn: listProducts });
+
   const [search, setSearch] = useState("");
+  const [whs, setWhs] = useState<string[]>([]);
+  const [prods, setProds] = useState<string[]>([]);
+  const [reasons, setReasons] = useState<Reason[]>([]);
+  const [directions, setDirections] = useState<Direction[]>([]);
+  const [datePreset, setDatePreset] = useState<DatePreset>("all");
 
   const filtered = useMemo(() => {
+    const cutoff = datePresetCutoff(datePreset);
     const q = search.trim().toLowerCase();
-    if (!q) return data;
-    return data.filter((r) => (r.products?.name ?? "").toLowerCase().includes(q));
-  }, [data, search]);
+    return data.filter((r: any) => {
+      if (whs.length && !whs.includes(r.warehouse_id)) return false;
+      if (prods.length && !prods.includes(r.product_id)) return false;
+      if (reasons.length && !reasons.includes(r.reason)) return false;
+      if (directions.length) {
+        const dir: Direction = r.quantity_delta >= 0 ? "in" : "out";
+        if (!directions.includes(dir)) return false;
+      }
+      if (cutoff && new Date(r.created_at) < cutoff) return false;
+      if (q) {
+        const hay = [
+          r.products?.name, r.products?.sku_code,
+          r.warehouses?.name, r.warehouses?.code,
+          r.bins?.bin_label, r.notes,
+        ].filter(Boolean).join(" ").toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [data, search, whs, prods, reasons, directions, datePreset]);
+
+  const clearAll = () => {
+    setSearch(""); setWhs([]); setProds([]); setReasons([]); setDirections([]); setDatePreset("all");
+  };
+
+  const pills: { key: string; label: string; onRemove: () => void }[] = [];
+  whs.forEach((w) => {
+    const name = warehouses.find((x) => x.id === w)?.name ?? "Warehouse";
+    pills.push({ key: `w-${w}`, label: name, onRemove: () => setWhs(whs.filter((x) => x !== w)) });
+  });
+  prods.forEach((p) => {
+    const name = products.find((x) => x.id === p)?.name ?? "Product";
+    pills.push({ key: `p-${p}`, label: name, onRemove: () => setProds(prods.filter((x) => x !== p)) });
+  });
+  reasons.forEach((r) => pills.push({ key: `r-${r}`, label: REASON_LABELS[r], onRemove: () => setReasons(reasons.filter((x) => x !== r)) }));
+  directions.forEach((d) => pills.push({ key: `d-${d}`, label: d === "in" ? "Inbound" : "Outbound", onRemove: () => setDirections(directions.filter((x) => x !== d)) }));
+  if (datePreset !== "all") {
+    pills.push({ key: "date", label: ({ today: "Today", "7d": "Last 7 days", "30d": "Last 30 days" } as any)[datePreset], onRemove: () => setDatePreset("all") });
+  }
 
   return (
     <main className="mx-auto max-w-7xl px-6 py-12">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <p className="text-sm font-medium text-primary">History</p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">Activity</h1>
-          <p className="mt-2 max-w-xl text-[15px] text-muted-foreground">
-            Every inventory change across all warehouses, newest first. Transfers show as paired moves.
-          </p>
-        </div>
-        <div className="relative w-72">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search by product" className="pl-9" />
+      <div>
+        <p className="text-sm font-medium text-primary">History</p>
+        <h1 className="mt-1 text-3xl font-semibold tracking-tight">Activity</h1>
+        <p className="mt-2 max-w-2xl text-[15px] text-muted-foreground">
+          Every inventory change across all warehouses, newest first. Transfers show as paired moves.
+        </p>
+      </div>
+
+      <div className="mt-8">
+        <FilterBar
+          search={search}
+          onSearch={setSearch}
+          searchPlaceholder="Search product, SKU, bin, notes…"
+          pills={pills}
+          onClearAll={clearAll}
+          resultCount={filtered.length}
+          totalCount={data.length}
+        >
+          <MultiSelect<string>
+            label="Warehouse"
+            icon={<Warehouse className="h-3.5 w-3.5 opacity-70" />}
+            options={warehouses.map((w) => ({ value: w.id, label: w.name, hint: w.code }))}
+            values={whs}
+            onChange={setWhs}
+            placeholder="Find warehouse"
+          />
+          <MultiSelect<string>
+            label="Product"
+            icon={<Package className="h-3.5 w-3.5 opacity-70" />}
+            options={products.map((p) => ({ value: p.id, label: p.name, hint: p.sku_code }))}
+            values={prods}
+            onChange={setProds}
+            placeholder="Find product"
+          />
+          <MultiSelect<Reason>
+            label="Reason"
+            icon={<Boxes className="h-3.5 w-3.5 opacity-70" />}
+            options={REASON_OPTIONS}
+            values={reasons}
+            onChange={setReasons}
+            placeholder="Filter reason"
+          />
+          <DatePresetPicker value={datePreset} onChange={setDatePreset} />
+        </FilterBar>
+
+        <div className="mt-3">
+          <ChipGroup<Direction> options={DIRECTION_OPTIONS} values={directions} onChange={setDirections} />
         </div>
       </div>
 
-      <div className="mt-8 rounded-2xl border border-border bg-card shadow-card">
+      <div className="mt-6 rounded-2xl border border-border bg-card shadow-card">
         {isLoading ? (
           <div className="p-12 text-center text-sm text-muted-foreground">Loading activity…</div>
         ) : data.length === 0 ? (
@@ -68,7 +160,7 @@ function ActivityPage() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((r) => {
+              {filtered.map((r: any) => {
                 const reason = r.reason as Reason;
                 const isTransfer = reason === "transfer_in" || reason === "transfer_out";
                 const delta = r.quantity_delta;
@@ -88,12 +180,14 @@ function ActivityPage() {
                     </td>
                     <td className="px-5 py-3.5 text-muted-foreground">{REASON_LABELS[reason]}</td>
                     <td className="px-5 py-3.5 text-muted-foreground">{r.notes ?? <span className="text-border">—</span>}</td>
-                    <td className="px-5 py-3.5 text-xs text-muted-foreground">{format(new Date(r.created_at), "MMM d, yyyy · HH:mm")}</td>
+                    <td className="px-5 py-3.5 text-xs text-muted-foreground whitespace-nowrap">{format(new Date(r.created_at), "MMM d, yyyy · HH:mm")}</td>
                   </tr>
                 );
               })}
-              {filtered.length === 0 && (
-                <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-muted-foreground">No activity matches "{search}".</td></tr>
+              {filtered.length === 0 && data.length > 0 && (
+                <tr><td colSpan={7} className="px-5 py-12 text-center text-sm text-muted-foreground">
+                  No results. Try removing a filter.
+                </td></tr>
               )}
             </tbody>
           </table>
